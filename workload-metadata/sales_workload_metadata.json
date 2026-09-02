@@ -1,0 +1,49 @@
+{
+  "max_duration": 300,
+  "project_name": "Sales_Workload_Load_Test",
+  "tasks": [
+    {
+      "load_type": "jmeter",
+      "version": "5.6.3",
+      "task_name": "Sales-CreateLead-UpdateLead",
+      "script_name": "sales-workload.jmx",
+      "data_files": {
+        "lead_file": "sales_leads.csv"
+      },
+      "users_file": "sales_users.csv"
+    }
+  ],
+  "config": {
+    "results_tree": {
+      "enabled": true
+    }
+  },
+  "client_network_policy": {
+    "enabled": true,
+    "allowed_domains": [
+      "example--sandbox.sandbox.my.salesforce.com",
+      "example--sandbox.sandbox.lightning.force.com",
+      "example--sandbox.sandbox.file.force.com",
+      "example--sandbox--c.sandbox.vf.force.com",
+      "*.my.salesforce.com",
+      "*.lightning.force.com",
+      "*.file.force.com",
+      "*.vf.force.com",
+      "*.sandbox.my.salesforce.com",
+      "*.sandbox.lightning.force.com",
+      "*.sandbox.file.force.com",
+      "*.sandbox.vf.force.com",
+      "*.my.site.com",
+      "*.sandbox.my.site.com",
+      "*.salesforce-sites.com",
+      "*.sandbox.salesforce-sites.com",
+      "*.visualforce.com",
+      "*.sandbox.visualforce.com",
+      "*.force.com",
+      "*.sandbox.force.com"
+    ],
+    "allowed_ips": [
+      "10.0.0.0/24"
+    ]
+  }
+}

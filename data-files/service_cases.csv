@@ -1,0 +1,6 @@
+Subject,Description,Priority,Origin,Status,UpdatedStatus,ContactEmail
+"Cannot log in","User reports login loop after password reset","High","Web","New","Working","customer1@example.com"
+"Billing discrepancy","Invoice total does not match order","Medium","Email","New","Escalated","customer2@example.com"
+"Feature request","Requesting export to CSV","Low","Phone","New","Working","customer3@example.com"
+"App crash on save","Console crashes when saving large record","High","Web","New","Escalated","customer4@example.com"
+"Slow performance","Dashboard takes 30s to load","Medium","Chat","New","Working","customer5@example.com"

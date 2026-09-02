@@ -1,0 +1,6 @@
+SessionLabel,UtteranceText,ExpectedTopic
+"order-status","What is the status of my order 10025?","OrderManagement"
+"reset-pw","I need to reset my password","AccountHelp"
+"product-info","Tell me about the Premium plan features","ProductInquiry"
+"book-appt","Can you book a service appointment for Friday?","Scheduling"
+"escalate","I want to speak to a human agent","Escalation"

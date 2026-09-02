@@ -1,0 +1,15 @@
+{
+  "name": "salesforce-loadtest-playwright",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Playwright scenarios mirroring the JMeter workloads (login, sales, service, agent).",
+  "scripts": {
+    "login": "node login-flow-run.js",
+    "sales": "node sales-workload.js",
+    "service": "node service-workload.js",
+    "agent": "node agent-workload.js"
+  },
+  "dependencies": {
+    "playwright": "^1.47.0"
+  }
+}

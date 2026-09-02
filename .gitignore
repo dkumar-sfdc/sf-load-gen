@@ -1,0 +1,13 @@
+# JMeter run artifacts
+results/
+*.jtl
+*.log
+jmeter.log
+
+# Real credentials - commit only the per-scenario sample *_users.csv
+user-files/*.csv
+!user-files/*_users.csv
+user-files/*.enc
+
+# OS
+.DS_Store

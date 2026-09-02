@@ -1,0 +1,6 @@
+Username,Company,LastName,FirstName,Email,Phone,LeadStatus,UpdatedStatus
+"sales.rep1@example.com","Acme Corp","Stone","Aaron","aaron.stone@acme.example","+1-415-555-0101","Open - Not Contacted","Working - Contacted"
+"sales.rep2@example.com","Globex LLC","Reyes","Bianca","bianca.reyes@globex.example","+1-415-555-0102","Open - Not Contacted","Working - Contacted"
+"sales.rep3@example.com","Initech","Okafor","Chidi","chidi.okafor@initech.example","+1-415-555-0103","Open - Not Contacted","Qualified"
+"sales.rep1@example.com","Umbrella Inc","Novak","Dana","dana.novak@umbrella.example","+1-415-555-0104","Open - Not Contacted","Working - Contacted"
+"sales.rep2@example.com","Soylent Co","Patel","Esha","esha.patel@soylent.example","+1-415-555-0105","Open - Not Contacted","Qualified"
