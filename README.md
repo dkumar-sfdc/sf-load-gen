@@ -139,20 +139,12 @@ otherwise the default applies. Set these first — the setUp loader and login sa
 
 | UDV | `-J` property | Default | Used by |
 |-----|---------------|---------|---------|
-| `MY_DOMAIN_HOST` | `my_domain_host` | `example--sandbox.sandbox.my.salesforce.com` | login POST, REST calls |
-| `LIGHTNING_HOST` | `lightning_host` | `example--sandbox.sandbox.lightning.force.com` | launch |
+| `MY_DOMAIN_HOST` | `my_domain_host` | `<domain>.sandbox.my.salesforce.com` | login POST, REST calls |
+| `LIGHTNING_HOST` | `lightning_host` | `<domain>.sandbox.lightning.force.com` | launch |
 | `API_VERSION`    | `api_version`    | `v60.0` | REST `sobjects` paths |
-| `USER_FILE`      | `users_file`     | `../../user-files/sales_users.csv` | setUp loader (reads `Username,Password`) |
-| `DATA_FILE`      | `data_file`      | `../../data-files/sales_leads.csv` | Scenario Data CSV (business rows + login `Username`) |
+| `USER_FILE`      | `users_file`     | `${__P(users_file,../../user-files/sales_users.csv)}` | setUp loader (reads `Username,Password`) |
+| `DATA_FILE`      | `data_file`      | `${__P(data_file,../../data-files/sales_leads.csv)}` | Scenario Data CSV (business rows + login `Username`) |
 
-```bash
-# example: point the plan at your org + data before running
-jmeter -n -t test-plans/jmeter/sales-workload.jmx \
-  -Jmy_domain_host=myorg--sandbox.sandbox.my.salesforce.com \
-  -Jlightning_host=myorg--sandbox.sandbox.lightning.force.com \
-  -Jusers_file=../../user-files/sales_users.csv \
-  -Jdata_file=../../data-files/sales_leads.csv
-```
 
 `USER_FILE` and `DATA_FILE` are the linkage: every `Username` in `DATA_FILE` must have a
 matching row in `USER_FILE`, or the resolve step (below) finds no password.
