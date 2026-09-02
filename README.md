@@ -62,17 +62,69 @@ workload's `.jmx` and metadata default to its own file; override with `-Jusers_f
 
 Sales differs from the other workloads. Its data file `sales_leads.csv` leads with a
 `Username` column — the login user each row runs as. The plan does **not** round-robin a
-users CSV. Instead:
+users CSV. Instead it splits login into two JMeter elements, mirroring the original
+**GRAB-TASK1** plan.
 
-1. A **setUp Thread Group** ("Load Credentials") runs once, reading `sales_users.csv`
-   (`Username,Password`) into JMeter properties `password.<username>`.
-2. A **"Resolve Password for row Username"** BeanShell PreProcessor in the main thread
-   group maps each data row's `Username` → `USERNAME`/`PASSWORD` before `T2_Login`.
+#### 1. setUp Thread Group — "Load Credentials"
 
-So each row logs in as its own user, with the password looked up (not carried in the data
-file). This mirrors the original **GRAB-TASK1** plan. The `Username` values must match rows
-in `sales_users.csv`. Service and agent workloads are unchanged — they round-robin their
-own `*_users.csv` via a standard CSV Data Set.
+A **setUp Thread Group** (1 thread, 1 loop) runs to completion *before* the main thread
+group starts. Its single **`JSR223Sampler` "Load user-file into properties"** (Groovy)
+reads the user file and stashes every credential as a global JMeter **property** keyed
+`password.<username>`:
+
+```groovy
+import org.apache.jmeter.services.FileServer
+def path = vars.get("USER_FILE")
+// try the path as given (absolute / cwd-relative), then relative to the .jmx dir
+def candidates = [new File(path), new File(FileServer.getFileServer().getBaseDir(), path)]
+def file = candidates.find { it.isFile() }
+...
+file.readLines().drop(1).each { line ->            // drop header row
+  def cols = line.trim().split(",", -1)
+  if (cols.length >= 2) props.put("password." + cols[0].trim(), cols[1].trim())
+}
+```
+
+#### 2. Resolve Password PreProcessor
+
+A **`JSR223PreProcessor` "Resolve Password for row Username"** (Groovy) on the main thread
+group runs once per iteration, *before* `T2_Login`. It reads the data row's `Username`,
+looks up the property loaded in step 1, and exposes `USERNAME`/`PASSWORD` for the login POST:
+
+```groovy
+def user = vars.get("Username")
+def password = props.get("password." + user)
+if (password == null) { log.error("No password in user-file for username: " + user); password = "" }
+vars.put("USERNAME", user)
+vars.put("PASSWORD", password)
+```
+
+So each row logs in as its own user, with the password looked up (never carried in the
+business data file).
+
+#### Dependencies
+
+- **Groovy** scripting engine — bundled with JMeter (`lib/groovy-all-*.jar`); no extra
+  install. `scriptLanguage=groovy` on both JSR223 elements.
+- **`org.apache.jmeter.services.FileServer`** (core JMeter) for `.jmx`-relative path fallback.
+- **Global `props`** — properties are a single JVM-wide map, so values written by the setUp
+  group are visible to every thread in the main group. Ordering guaranteed: setUp Thread
+  Groups always finish before main groups begin.
+- **`USER_FILE`** UDV — defaults to `../../user-files/sales_users.csv`; override with
+  `-Jusers_file=`. The loader resolves it either as-given or relative to the plan file.
+- Data-row **`Username`** values **must** exist in the user file, else no password maps.
+
+#### Validations
+
+| Where | Check | On failure |
+|-------|-------|------------|
+| setUp loader | file found via one of the candidate paths | sampler marked failed, message lists tried paths, `return` (no creds loaded) |
+| setUp loader | at least one credential parsed | `SampleResult.setSuccessful(loaded != 0)` — sampler red if file empty/malformed |
+| Resolve PreProcessor | `password.<username>` property exists | `log.error(...)`, `PASSWORD` set to empty (login then fails its assertion) |
+| `T2_Login` | login returned a session id | Response Assertion: variable `sid` must not contain `SID_NOT_FOUND` |
+
+Service and agent workloads are unchanged — they round-robin their own `*_users.csv` via a
+standard CSV Data Set (no setUp group, no resolve step).
 
 ## Run — JMeter
 
