@@ -10,7 +10,12 @@
       "data_files": {
         "prompt_file": "agent_prompts.csv"
       },
-      "users_file": "agent_users.csv"
+      "auth": {
+        "type": "jwt_bearer",
+        "client_id": "3MVG9mockConnectedAppConsumerKey",
+        "jwt_subject": "agent.user1@example.com",
+        "jwt_key_file": "jwt_key.example.pem"
+      }
     }
   ],
   "config": {

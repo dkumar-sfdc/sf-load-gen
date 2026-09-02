@@ -28,8 +28,153 @@ def user_credentials_csv():
 """
 
 
-def header(title, comments, data_csv_vars, data_csv_default, users_default, include_user_csv=True):
-    user_csv = user_credentials_csv() if include_user_csv else ""
+def jwt_udv_block():
+    # UDVs for the JWT Bearer flow (Pattern 3). Override each with -J at runtime.
+    return """          <elementProp name="LOGIN_HOST" elementType="Argument">
+            <stringProp name="Argument.name">LOGIN_HOST</stringProp>
+            <stringProp name="Argument.value">${__P(login_host,login.salesforce.com)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="CLIENT_ID" elementType="Argument">
+            <stringProp name="Argument.name">CLIENT_ID</stringProp>
+            <stringProp name="Argument.value">${__P(client_id,3MVG9mockConnectedAppConsumerKey)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="JWT_SUBJECT" elementType="Argument">
+            <stringProp name="Argument.name">JWT_SUBJECT</stringProp>
+            <stringProp name="Argument.value">${__P(jwt_subject,agent.user1@example.com)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="JWT_KEY_FILE" elementType="Argument">
+            <stringProp name="Argument.name">JWT_KEY_FILE</stringProp>
+            <stringProp name="Argument.value">${__P(jwt_key_file,../../user-files/jwt_key.example.pem)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+"""
+
+
+def jwt_auth():
+    # Pattern 3 (JWT Bearer): authenticate once per thread, cache access_token in thread
+    # vars, and skip re-auth on later iterations (If Controller guard). Replaces form login.
+    return """        <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController" testname="T1_Auth" enabled="true">
+          <boolProp name="TransactionController.parent">true</boolProp>
+          <boolProp name="TransactionController.includeTimers">false</boolProp>
+        </TransactionController>
+        <hashTree>
+          <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If not yet authenticated" enabled="true">
+            <stringProp name="IfController.condition">${__groovy(vars.get(&quot;access_token&quot;) == null || vars.get(&quot;access_token&quot;).length() == 0)}</stringProp>
+            <boolProp name="IfController.evaluateAll">false</boolProp>
+            <boolProp name="IfController.useExpression">true</boolProp>
+          </IfController>
+          <hashTree>
+            <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="Build JWT assertion" enabled="true">
+              <stringProp name="cacheKey">true</stringProp>
+              <stringProp name="filename"></stringProp>
+              <stringProp name="parameters"></stringProp>
+              <stringProp name="script">import java.util.Base64
+import java.security.KeyFactory
+import java.security.Signature
+import java.security.spec.PKCS8EncodedKeySpec
+
+// Build a signed RS256 JWT Bearer assertion. The matching X.509 cert must be uploaded to
+// the Salesforce Connected App (Use digital signatures). Key is a PKCS#8 PEM private key.
+def b64url = { bytes -&gt; Base64.getUrlEncoder().withoutPadding().encodeToString(bytes) }
+
+long exp = (System.currentTimeMillis() / 1000L) + 300L
+def headerJson = &quot;{\\&quot;alg\\&quot;:\\&quot;RS256\\&quot;}&quot;
+def claimJson  = &quot;{\\&quot;iss\\&quot;:\\&quot;&quot; + vars.get(&quot;CLIENT_ID&quot;) + &quot;\\&quot;,\\&quot;sub\\&quot;:\\&quot;&quot; + vars.get(&quot;JWT_SUBJECT&quot;) + &quot;\\&quot;,\\&quot;aud\\&quot;:\\&quot;https://&quot; + vars.get(&quot;LOGIN_HOST&quot;) + &quot;\\&quot;,\\&quot;exp\\&quot;:&quot; + exp + &quot;}&quot;
+def signingInput = b64url(headerJson.getBytes(&quot;UTF-8&quot;)) + &quot;.&quot; + b64url(claimJson.getBytes(&quot;UTF-8&quot;))
+
+def pem = new File(vars.get(&quot;JWT_KEY_FILE&quot;)).text
+        .replaceAll(&quot;-----BEGIN PRIVATE KEY-----&quot;, &quot;&quot;)
+        .replaceAll(&quot;-----END PRIVATE KEY-----&quot;, &quot;&quot;)
+        .replaceAll(&quot;\\s&quot;, &quot;&quot;)
+def key = KeyFactory.getInstance(&quot;RSA&quot;).generatePrivate(new PKCS8EncodedKeySpec(Base64.getDecoder().decode(pem)))
+def signer = Signature.getInstance(&quot;SHA256withRSA&quot;)
+signer.initSign(key)
+signer.update(signingInput.getBytes(&quot;UTF-8&quot;))
+vars.put(&quot;jwt_assertion&quot;, signingInput + &quot;.&quot; + b64url(signer.sign()))</stringProp>
+              <stringProp name="scriptLanguage">groovy</stringProp>
+            </JSR223Sampler>
+            <hashTree/>
+            <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="POST oauth2 token (JWT Bearer)">
+              <stringProp name="HTTPSampler.domain">${LOGIN_HOST}</stringProp>
+              <stringProp name="HTTPSampler.port">443</stringProp>
+              <stringProp name="HTTPSampler.protocol">https</stringProp>
+              <stringProp name="HTTPSampler.contentEncoding">UTF-8</stringProp>
+              <stringProp name="HTTPSampler.path">/services/oauth2/token</stringProp>
+              <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+              <stringProp name="HTTPSampler.method">POST</stringProp>
+              <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+              <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+              <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+                <collectionProp name="Arguments.arguments">
+                  <elementProp name="grant_type" elementType="HTTPArgument">
+                    <boolProp name="HTTPArgument.always_encode">true</boolProp>
+                    <stringProp name="Argument.name">grant_type</stringProp>
+                    <stringProp name="Argument.value">urn:ietf:params:oauth:grant-type:jwt-bearer</stringProp>
+                    <stringProp name="Argument.metadata">=</stringProp>
+                    <boolProp name="HTTPArgument.use_equals">true</boolProp>
+                  </elementProp>
+                  <elementProp name="assertion" elementType="HTTPArgument">
+                    <boolProp name="HTTPArgument.always_encode">true</boolProp>
+                    <stringProp name="Argument.name">assertion</stringProp>
+                    <stringProp name="Argument.value">${jwt_assertion}</stringProp>
+                    <stringProp name="Argument.metadata">=</stringProp>
+                    <boolProp name="HTTPArgument.use_equals">true</boolProp>
+                  </elementProp>
+                </collectionProp>
+              </elementProp>
+            </HTTPSamplerProxy>
+            <hashTree>
+              <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Header Manager" enabled="true">
+                <collectionProp name="HeaderManager.headers">
+                  <elementProp name="Content-Type" elementType="Header">
+                    <stringProp name="Header.name">Content-Type</stringProp>
+                    <stringProp name="Header.value">application/x-www-form-urlencoded</stringProp>
+                  </elementProp>
+                </collectionProp>
+              </HeaderManager>
+              <hashTree/>
+              <RegexExtractor guiclass="RegexExtractorGui" testclass="RegexExtractor" testname="Extract access_token" enabled="true">
+                <stringProp name="RegexExtractor.refname">access_token</stringProp>
+                <stringProp name="RegexExtractor.regex">&quot;access_token&quot;\\s*:\\s*&quot;(.+?)&quot;</stringProp>
+                <stringProp name="RegexExtractor.template">$1$</stringProp>
+                <stringProp name="RegexExtractor.default">TOKEN_NOT_FOUND</stringProp>
+                <stringProp name="RegexExtractor.match_number">1</stringProp>
+                <boolProp name="RegexExtractor.default_empty_value">false</boolProp>
+              </RegexExtractor>
+              <hashTree/>
+              <RegexExtractor guiclass="RegexExtractorGui" testclass="RegexExtractor" testname="Extract instance_url" enabled="true">
+                <stringProp name="RegexExtractor.refname">instance_url</stringProp>
+                <stringProp name="RegexExtractor.regex">&quot;instance_url&quot;\\s*:\\s*&quot;(.+?)&quot;</stringProp>
+                <stringProp name="RegexExtractor.template">$1$</stringProp>
+                <stringProp name="RegexExtractor.default"></stringProp>
+                <stringProp name="RegexExtractor.match_number">1</stringProp>
+                <boolProp name="RegexExtractor.default_empty_value">true</boolProp>
+              </RegexExtractor>
+              <hashTree/>
+              <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert access_token issued" enabled="true">
+                <collectionProp name="Asserion.test_strings">
+                  <stringProp name="tok">TOKEN_NOT_FOUND</stringProp>
+                </collectionProp>
+                <stringProp name="Assertion.custom_message">JWT Bearer token exchange failed - check client_id, jwt_subject, key/cert, and Connected App.</stringProp>
+                <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+                <boolProp name="Assertion.assume_success">false</boolProp>
+                <intProp name="Assertion.test_type">6</intProp>
+                <stringProp name="Assertion.scope">variable</stringProp>
+                <stringProp name="Scope.variable">access_token</stringProp>
+              </ResponseAssertion>
+              <hashTree/>
+            </hashTree>
+          </hashTree>
+        </hashTree>
+"""
+
+
+def header(title, comments, data_csv_vars, data_csv_default, users_default, include_user_csv=True, auth="form"):
+    user_csv = user_credentials_csv() if (include_user_csv and auth != "jwt") else ""
+    jwt_udvs = jwt_udv_block() if auth == "jwt" else ""
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
   <hashTree>
@@ -52,7 +197,7 @@ def header(title, comments, data_csv_vars, data_csv_default, users_default, incl
             <stringProp name="Argument.value">${{__P(api_version,v60.0)}}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
-          <elementProp name="USER_FILE" elementType="Argument">
+{jwt_udvs}          <elementProp name="USER_FILE" elementType="Argument">
             <stringProp name="Argument.name">USER_FILE</stringProp>
             <stringProp name="Argument.value">${{__P(users_file,{users_default})}}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
@@ -123,7 +268,7 @@ def header(title, comments, data_csv_vars, data_csv_default, users_default, incl
 def setup_thread_group():
     # setUp Thread Group: run once before the main group. Loads each Username -> Password
     # from the user-file into JMeter properties so the task can resolve the password for
-    # the login username carried on each business-data row. (pattern ref: GRAB-TASK1)
+    # the login username carried on each business-data row (data-file-driven login).
     return """      <SetupThreadGroup guiclass="SetupThreadGroupGui" testclass="SetupThreadGroup" testname="setUp - Load Credentials" enabled="true">
         <intProp name="ThreadGroup.num_threads">1</intProp>
         <intProp name="ThreadGroup.ramp_time">1</intProp>
@@ -415,7 +560,7 @@ def rest_get(name, path):
           <hashTree/>
 """
 
-def rest_json_post(name, path, json_body, extractor=None, method="POST"):
+def rest_json_post(name, path, json_body, extractor=None, method="POST", token_var="sid"):
     extra = ""
     if extractor:
         ref, regex, default = extractor
@@ -470,7 +615,7 @@ def rest_json_post(name, path, json_body, extractor=None, method="POST"):
                 </elementProp>
                 <elementProp name="Authorization" elementType="Header">
                   <stringProp name="Header.name">Authorization</stringProp>
-                  <stringProp name="Header.value">Bearer ${{sid}}</stringProp>
+                  <stringProp name="Header.value">Bearer ${{{token_var}}}</stringProp>
                 </elementProp>
               </collectionProp>
             </HeaderManager>
@@ -501,7 +646,7 @@ THINK = """        <TestAction guiclass="TestActionGui" testclass="TestAction" t
         </hashTree>
 """
 
-LOGOUT_AND_FOOTER = """        <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController" testname="T4_Logout" enabled="true">
+LOGOUT_FORM = """        <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController" testname="T4_Logout" enabled="true">
           <boolProp name="TransactionController.parent">true</boolProp>
           <boolProp name="TransactionController.includeTimers">false</boolProp>
         </TransactionController>
@@ -521,7 +666,9 @@ LOGOUT_AND_FOOTER = """        <TransactionController guiclass="TransactionContr
           </HTTPSamplerProxy>
           <hashTree/>
         </hashTree>
-        <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="View Results Tree" enabled="true">
+"""
+
+FOOTER = """        <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="View Results Tree" enabled="true">
           <boolProp name="ResultCollector.error_logging">false</boolProp>
           <objProp>
             <name>saveConfig</name>
@@ -604,10 +751,11 @@ SCENARIOS = {
     },
     "agent": {
         "title": "Agent Workload Load Test",
-        "comments": "Login + Agentforce journey: start an agent session, send an utterance, end session.",
+        "comments": "JWT Bearer auth (Pattern 3) + Agentforce journey: authenticate once per thread via signed JWT, then start an agent session, send an utterance, end session. No form login.",
         "users_default": "../../user-files/agent_users.csv",
         "data_default": "../../data-files/agent_prompts.csv",
         "data_vars": "SessionLabel,UtteranceText,ExpectedTopic",
+        "auth": "jwt",
         "txn_name": "T3_Agent",
         "samplers": (
             rest_json_post(
@@ -615,16 +763,19 @@ SCENARIOS = {
                 "/einstein/ai-agent/v1/agents/${__P(agent_id,0XxSB000000mockAgentId)}/sessions",
                 '{"externalSessionKey":"${SessionLabel}-${__threadNum}","instanceConfig":{"endpoint":"https://${MY_DOMAIN_HOST}"},"streamingCapabilities":{"chunkTypes":["Text"]}}',
                 extractor=("agentSessionId", '"sessionId"\\s*:\\s*"(.+?)"', "SESSION_ID_NOT_FOUND"),
+                token_var="access_token",
             )
             + rest_json_post(
                 "POST send utterance",
                 "/einstein/ai-agent/v1/sessions/${agentSessionId}/messages",
                 '{"message":{"sequenceId":1,"type":"Text","text":"${UtteranceText}"}}',
+                token_var="access_token",
             )
             + rest_json_post(
                 "POST end agent session",
                 "/einstein/ai-agent/v1/sessions/${agentSessionId}/end",
                 '{"reason":"UserRequest"}',
+                token_var="access_token",
             )
         ),
     },
@@ -634,17 +785,19 @@ def build():
     os.makedirs(OUT, exist_ok=True)
     for key, s in SCENARIOS.items():
         resolve = s.get("resolve_password", False)
+        auth = s.get("auth", "form")
         doc = (
             header(s["title"], s["comments"], s["data_vars"], s["data_default"],
-                   s["users_default"], include_user_csv=not resolve)
+                   s["users_default"], include_user_csv=not resolve, auth=auth)
             + (setup_thread_group() if resolve else "")
             + thread_group_open(s["title"])
             + (resolve_password_preproc() if resolve else "")
-            + LOGIN
+            + (jwt_auth() if auth == "jwt" else LOGIN)
             + txn(s["txn_name"], s["samplers"])
             + s.get("extra_txns", "")
             + THINK
-            + LOGOUT_AND_FOOTER
+            + (LOGOUT_FORM if auth != "jwt" else "")
+            + FOOTER
         )
         path = os.path.join(OUT, f"{key}-workload.jmx")
         with open(path, "w") as f:

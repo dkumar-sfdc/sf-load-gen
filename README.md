@@ -12,7 +12,7 @@ no customer data, all hosts/credentials are placeholders.
 | **login**   | launch → username/password → frontdoor session → logout | `salesforce-login.jmx` | `login-flow.js` |
 | **sales**   | launch → login → create Lead → update Lead → logout | `sales-workload.jmx` | `sales-workload.js` |
 | **service** | launch → login → create Case → update Case → logout | `service-workload.jmx` | `service-workload.js` |
-| **agent**   | login → start Agentforce session → send utterance → end session | `agent-workload.jmx` | `agent-workload.js` |
+| **agent**   | JWT auth → start Agentforce session → send utterance → end session | `agent-workload.jmx` | `agent-workload.js` |
 
 ## Layout
 
@@ -60,8 +60,8 @@ workload's `.jmx` and metadata default to its own file; override with `-Jusers_f
 
 ## Execution patterns
 
-Three ways to wire credentials, data, and the login step. This repo ships Pattern 1 and
-Pattern 2; Pattern 3 is documented as a future option.
+Three ways to wire credentials, data, and the login step. This repo ships all three
+patterns.
 
 ### Pattern 1 — User-File-Driven Execution (session-per-user)
 
@@ -91,36 +91,45 @@ per row: extract Username → login → single transaction → discard session
 Best for: **bulk transaction throughput** — volume of records processed, not persistent
 sessions. Higher login:transaction ratio (1 login per row vs 1 login per N actions).
 **This repo:** the `sales` workload (data row carries the login `Username`; setUp group +
-resolve PreProcessor supply the password — see below). Matches the original **GRAB-TASK1**
-setup.
+resolve PreProcessor supply the password — see below). Data-file-driven login.
 
-### Pattern 3 — JWT/Token-Based Auth + session reuse (future)
+### Pattern 3 — JWT/Token-Based Auth + session reuse
 
 Authenticate **once via JWT/OAuth** (not username/password form login), cache the token,
 reuse across all operations for that thread — same session-persistence idea as Pattern 1
 but skips repeated credential-based login overhead.
 
+**This repo:** the `agent` workload. Each thread authenticates once via a signed **RS256
+JWT Bearer assertion**, exchanges it for an `access_token`, and reuses that token for every
+Agentforce API call in the thread:
+
+- **JMeter:** a `JSR223Sampler` "Build JWT assertion" (Groovy) signs the RS256 assertion,
+  followed by a `POST oauth2 token` sampler — both wrapped in an **If Controller** keyed on
+  `vars.get("access_token") == null` so the exchange runs once per thread, not once per
+  iteration.
+- **Playwright:** Node's built-in `crypto` module signs the RS256 assertion; the token
+  exchange uses `request.newContext()` once per worker/session.
+
 ```groovy
-// PreProcessor - once per thread
-if (vars.get("access_token") == null) {
-    // JWT bearer flow / OAuth client_credentials or username-password JWT grant
-    token = httpPostJWT(tokenEndpoint, clientId, clientSecret, username)
-    vars.put("access_token", token)
-}
-// all subsequent HTTP samplers: Authorization: Bearer ${access_token}
+// If Controller condition: ${__groovy(vars.get("access_token") == null)}
+// JSR223Sampler "Build JWT assertion" builds+signs the RS256 JWT (iss=client_id, sub=jwt_subject,
+// aud=login_host, exp=now+3min); the following "POST oauth2 token" sampler exchanges it and a
+// JSR223PostProcessor stores the response's access_token into vars for reuse by every later sampler:
+// Authorization: Bearer ${access_token}
 ```
 
 Best for: **isolating business-logic load from auth load** — stress the app tier without
-hammering the login/SSO tier. Salesforce-specific: **JWT Bearer Flow** (Connected App +
-certificate) skips the password entirely — no CSV password column needed. Not implemented
-here; the shipped plans use standard `lt=standard` form login.
+hammering the login/SSO tier. Salesforce-specific: **JWT Bearer Flow** skips the password
+entirely — no CSV password column needed. Requires a Salesforce **Connected App** with
+"Use digital signatures" enabled (certificate uploaded there must match the private key
+used to sign the assertion) and the target user **pre-authorized** for JWT access on that
+Connected App (or org-wide admin pre-approval).
 
 ### Sales credential model (data-driven login)
 
 Sales differs from the other workloads. Its data file `sales_leads.csv` leads with a
 `Username` column — the login user each row runs as. The plan does **not** round-robin a
-users CSV. Instead it splits login into two JMeter elements, mirroring the original
-**GRAB-TASK1** plan.
+users CSV. Instead it splits login into two JMeter elements for data-file-driven login.
 
 #### 1. setUp Thread Group — "Load Credentials"
 
@@ -131,14 +140,36 @@ reads the user file and stashes every credential as a global JMeter **property**
 
 ```groovy
 import org.apache.jmeter.services.FileServer
+
+// The plan has to run wherever it is dropped on the VM, so try the path as given
+// (absolute, or relative to the working directory) and then relative to this .jmx.
 def path = vars.get("USER_FILE")
-// try the path as given (absolute / cwd-relative), then relative to the .jmx dir
 def candidates = [new File(path), new File(FileServer.getFileServer().getBaseDir(), path)]
 def file = candidates.find { it.isFile() }
-...
-file.readLines().drop(1).each { line ->            // drop header row
-  def cols = line.trim().split(",", -1)
-  if (cols.length >= 2) props.put("password." + cols[0].trim(), cols[1].trim())
+if (file == null) {
+  SampleResult.setSuccessful(false)
+  SampleResult.setResponseData("credentials loaded: 0", "UTF-8")
+  SampleResult.setResponseMessage("No user file at " + candidates.collect { it.getAbsolutePath() }.join(" or "))
+  return
+}
+
+int loaded = 0
+file.readLines().drop(1).each { line ->
+  def row = line.trim()
+  if (row.length() != 0) {
+    def cols = row.split(",", -1)
+    if (cols.length >= 2) {
+      props.put("password." + cols[0].trim(), cols[1].trim())
+      loaded++
+    }
+  }
+}
+
+SampleResult.setResponseData("credentials loaded: " + loaded, "UTF-8")
+SampleResult.setDataType("text")
+SampleResult.setSuccessful(loaded != 0)
+if (loaded == 0) {
+  SampleResult.setResponseMessage("No credentials found in " + file.getAbsolutePath())
 }
 ```
 
@@ -197,6 +228,10 @@ All settings are `-J` properties with safe defaults:
 | `threads` / `ramp` / `loops` | `10` / `30` / `1` | load shape |
 | `think_time` | `2000` | think ms (±1000) |
 | `agent_id` | mock id | Agentforce agent id (agent workload) |
+| `login_host` | `login.salesforce.com` | JWT token endpoint host (agent workload, Pattern 3 JWT auth) |
+| `client_id` | placeholder | Connected App consumer key (agent workload, JWT) |
+| `jwt_subject` | placeholder | User to impersonate/authenticate as (agent workload, JWT) |
+| `jwt_key_file` | `../../user-files/jwt_key.example.pem` | PKCS#8 PEM private key for signing the JWT assertion (agent workload, JWT) — `jwt_key.example.pem` is a throwaway sample key; replace with your Connected App's key |
 
 ```bash
 jmeter -n -t test-plans/jmeter/sales-workload.jmx \

@@ -9,5 +9,9 @@ user-files/*.csv
 !user-files/*_users.csv
 user-files/*.enc
 
+# JWT private keys — never commit real keys; sample is tracked
+user-files/*.pem
+!user-files/jwt_key.example.pem
+
 # OS
 .DS_Store
