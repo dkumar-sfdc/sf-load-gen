@@ -58,6 +58,63 @@ Credentials are **per test** in `user-files/<scenario>_users.csv` (`Username,Pas
 `login_users.csv`, `sales_users.csv`, `service_users.csv`, `agent_users.csv`. Each
 workload's `.jmx` and metadata default to its own file; override with `-Jusers_file=`.
 
+## Execution patterns
+
+Three ways to wire credentials, data, and the login step. This repo ships Pattern 1 and
+Pattern 2; Pattern 3 is documented as a future option.
+
+### Pattern 1 — User-File-Driven Execution (session-per-user)
+
+The **users file is the source of truth**. Each thread reads one row → logs in once →
+performs **all** operations for that session → logs out.
+
+```
+CSVDataSet(users.csv) → shareMode.thread          # each thread picks: username, password
+login once → execute full transaction flow as that user → logout
+```
+
+Best for: **simulating real user sessions** — one person logs in, does N actions, logs
+out. If a row needs business data, look it up by username (Pattern-2-style lookup) *after*
+login. **This repo:** the `service` and `agent` workloads (round-robin their own
+`*_users.csv` via a thread-scoped CSV Data Set, one login per iteration of many actions).
+
+### Pattern 2 — Data-File-Driven Execution (row-per-transaction)
+
+The **data/accounts file is the source of truth**. For **each** row → fresh login →
+execute one transaction → discard session → next row.
+
+```
+CSVDataSet(data.csv) → shareMode.all, recycle=true
+per row: extract Username → login → single transaction → discard session
+```
+
+Best for: **bulk transaction throughput** — volume of records processed, not persistent
+sessions. Higher login:transaction ratio (1 login per row vs 1 login per N actions).
+**This repo:** the `sales` workload (data row carries the login `Username`; setUp group +
+resolve PreProcessor supply the password — see below). Matches the original **GRAB-TASK1**
+setup.
+
+### Pattern 3 — JWT/Token-Based Auth + session reuse (future)
+
+Authenticate **once via JWT/OAuth** (not username/password form login), cache the token,
+reuse across all operations for that thread — same session-persistence idea as Pattern 1
+but skips repeated credential-based login overhead.
+
+```groovy
+// PreProcessor - once per thread
+if (vars.get("access_token") == null) {
+    // JWT bearer flow / OAuth client_credentials or username-password JWT grant
+    token = httpPostJWT(tokenEndpoint, clientId, clientSecret, username)
+    vars.put("access_token", token)
+}
+// all subsequent HTTP samplers: Authorization: Bearer ${access_token}
+```
+
+Best for: **isolating business-logic load from auth load** — stress the app tier without
+hammering the login/SSO tier. Salesforce-specific: **JWT Bearer Flow** (Connected App +
+certificate) skips the password entirely — no CSV password column needed. Not implemented
+here; the shipped plans use standard `lt=standard` form login.
+
 ### Sales credential model (data-driven login)
 
 Sales differs from the other workloads. Its data file `sales_leads.csv` leads with a
