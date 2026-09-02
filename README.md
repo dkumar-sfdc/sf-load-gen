@@ -131,6 +131,32 @@ Sales differs from the other workloads. Its data file `sales_leads.csv` leads wi
 `Username` column — the login user each row runs as. The plan does **not** round-robin a
 users CSV. Instead it splits login into two JMeter elements for data-file-driven login.
 
+#### 0. Pre-steps — set User Defined Variables
+
+Before the setUp group runs, the plan resolves its **User Defined Variables** (on the Test
+Plan node). Each is a `${__P(name,default)}` lookup, so a `-J<name>=` override wins,
+otherwise the default applies. Set these first — the setUp loader and login samplers read them:
+
+| UDV | `-J` property | Default | Used by |
+|-----|---------------|---------|---------|
+| `MY_DOMAIN_HOST` | `my_domain_host` | `example--sandbox.sandbox.my.salesforce.com` | login POST, REST calls |
+| `LIGHTNING_HOST` | `lightning_host` | `example--sandbox.sandbox.lightning.force.com` | launch |
+| `API_VERSION`    | `api_version`    | `v60.0` | REST `sobjects` paths |
+| `USER_FILE`      | `users_file`     | `../../user-files/sales_users.csv` | setUp loader (reads `Username,Password`) |
+| `DATA_FILE`      | `data_file`      | `../../data-files/sales_leads.csv` | Scenario Data CSV (business rows + login `Username`) |
+
+```bash
+# example: point the plan at your org + data before running
+jmeter -n -t test-plans/jmeter/sales-workload.jmx \
+  -Jmy_domain_host=myorg--sandbox.sandbox.my.salesforce.com \
+  -Jlightning_host=myorg--sandbox.sandbox.lightning.force.com \
+  -Jusers_file=../../user-files/sales_users.csv \
+  -Jdata_file=../../data-files/sales_leads.csv
+```
+
+`USER_FILE` and `DATA_FILE` are the linkage: every `Username` in `DATA_FILE` must have a
+matching row in `USER_FILE`, or the resolve step (below) finds no password.
+
 #### 1. setUp Thread Group — "Load Credentials"
 
 A **setUp Thread Group** (1 thread, 1 loop) runs to completion *before* the main thread
